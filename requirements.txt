@@ -1,5 +1,5 @@
 flet
-import numpy as np
+numpy
 random
 pyaudio
 numpy
