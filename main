@@ -1,7 +1,7 @@
 import flet as ft
 import speech_recognition as sr
 import random
-import pyaudio  # Importation de pyaudio
+import pyaudio  # type: ignore
 import numpy as np
 import asyncio
 import unidecode
@@ -13,32 +13,35 @@ consonnes_listes = [["b", "d"], ["b", "d", "g"], ["b", "d", "g", "p"]]
 syllabes_listes = [["ba", "da"], ["ba", "da", "ga"], ["ba", "da", "ga", "pa"]]
 mots_listes = [["papa", "maman"], ["bébé", "jouer"], ["papillon", "camion"]]
 
-# Seuil minimum de volume pour filtrer le bruit
-VOLUME_THRESHOLD = 100
-SIMILARITY_THRESHOLD = 0.5  # Tolérance de similarité
+# Seuils
+VOLUME_THRESHOLD = 50  # Ajustez selon vos besoins
+SIMILARITY_THRESHOLD = 0.6  # Ajustez pour plus de tolérance
 
 # Fonction de normalisation
 def normalize_text(text):
+    """Normalise le texte en minuscules et supprime les accents."""
     return unidecode.unidecode(text.lower().strip())
 
 # Comparer les réponses par similarité
 def is_similar(expected_text, recognized_text):
+    """Vérifie si le texte reconnu est similaire au texte attendu."""
     normalized_expected = normalize_text(expected_text)
     normalized_recognized = normalize_text(recognized_text)
     similarity = SequenceMatcher(None, normalized_expected, normalized_recognized).ratio()
     return similarity >= SIMILARITY_THRESHOLD
 
 async def recognize_speech(expected_text):
+    """Reconnaît la parole à partir du microphone et compare avec le texte attendu."""
     recognizer = sr.Recognizer()
     with sr.Microphone() as source:
         print("Préparation à l'écoute...")
         recognizer.adjust_for_ambient_noise(source, duration=1.0)
         try:
             print("En attente de l'audio...")
-            audio_data = recognizer.listen(source, timeout=10)
+            audio_data = recognizer.listen(source, timeout=5)  # Limite à 5 secondes
             print("Audio reçu, traitement...")
             recognized_text = recognizer.recognize_google(audio_data, language="fr-FR")
-            print(f"Reconnu : {recognized_text}")
+            print(f"Texte reconnu : {recognized_text}")  # Ajout d'un print pour le texte reconnu
             is_correct = is_similar(expected_text, recognized_text)
             return is_correct, recognized_text
         except sr.UnknownValueError:
@@ -47,11 +50,15 @@ async def recognize_speech(expected_text):
         except sr.RequestError as e:
             print(f"Erreur de connexion : {e}")
             return False, "Erreur de connexion au service de reconnaissance."
+        except sr.WaitTimeoutError:
+            print("Temps d'écoute dépassé.")
+            return False, "Temps d'écoute dépassé."
         except Exception as e:
             print(f"Erreur dans recognize_speech : {e}")
             return False, "Erreur inconnue."
 
 async def main(page: ft.Page):
+    """Fonction principale qui initialise l'interface utilisateur."""
     page.title = "Application de Lecture"
     page.window.width = 390
     page.window.height = 740
@@ -69,13 +76,15 @@ async def main(page: ft.Page):
     recognized_text_field = ft.TextField(label="Texte reconnu", read_only=True)
 
     def update_volume():
+        """Met à jour le volume capté par le microphone."""
         try:
             p = pyaudio.PyAudio()
-            stream = p.open(format=pyaudio.paInt16, channels=1, rate=44100, input=True, frames_per_buffer=1024)
+            stream = p.open(format=pyaudio.paInt16, channels=1, rate=44100, input=True, frames_per_buffer=2000)
 
             while recording:
-                data = np.frombuffer(stream.read(1024, exception_on_overflow=False), dtype=np.int16)
+                data = np.frombuffer(stream.read(2000, exception_on_overflow=False), dtype=np.int16)
                 volume = int(np.mean(np.abs(data)))
+                print(f"Volume capté : {volume}")
                 volume_label.value = f"Volume : {volume}" if volume > VOLUME_THRESHOLD else "Volume : 0"
                 page.update()
 
@@ -84,17 +93,23 @@ async def main(page: ft.Page):
             p.terminate()
         except Exception as e:
             print(f"Erreur dans update_volume : {e}")
+        finally:
+            deactivate_microphone()  # Désactiver le micro ici
 
     def show_main_menu(e=None):
+        """Affiche le menu principal."""
         page.clean()
         page.add(
+            ft.Row([
+                ft.ElevatedButton("Quitter", on_click=exit_app, width=100, bgcolor="#FF5733", color="white"),
+                ft.ElevatedButton("Désactiver Micro", on_click=deactivate_microphone, width=150, bgcolor="#FFC107", color="black", visible=False),
+            ]),
             ft.Text(value="Bienvenue dans l'application de lecture", size=20, color="#006400"),
-            ft.ElevatedButton("Commencer", on_click=start_lesson, width=200, bgcolor="#4CAF50", color="white"),
-            ft.ElevatedButton("Aide", on_click=show_help, width=200, bgcolor="#4CAF50", color="white"),
-            ft.ElevatedButton("Quitter", on_click=exit_app, width=200, bgcolor="#4CAF50", color="white"),
+            ft.ElevatedButton("Commencer", on_click=start_lesson, width=200, bgcolor="#4CAF50", color="white", visible=True),
         )
 
     def show_help(e=None):
+        """Affiche l'aide sur l'utilisation de l'application."""
         page.clean()
         help_text = ft.Text(
             "Lisez à haute voix la lettre, syllabe ou le mot affiché.\n"
@@ -106,13 +121,23 @@ async def main(page: ft.Page):
         page.add(help_text, back_button)
 
     def start_lesson(e=None):
+        """Démarre la leçon en réinitialisant le niveau courant."""
         nonlocal current_level
         current_level = 0
         show_next_item()
 
     def show_next_item():
+        """Affiche l'élément suivant à lire."""
         nonlocal current_item
         page.clean()
+
+        # Réafficher les boutons de contrôle
+        page.add(
+            ft.Row([
+                ft.ElevatedButton("Quitter", on_click=exit_app, width=100, bgcolor="#FF5733", color="white"),
+                ft.ElevatedButton("Désactiver Micro", on_click=deactivate_microphone, width=150, bgcolor="#FFC107", color="black", visible=False),
+            ])
+        )
 
         if current_level < len(voyelles_listes):
             items_list = voyelles_listes[current_level]
@@ -131,21 +156,20 @@ async def main(page: ft.Page):
         page.add(record_button)
 
     async def start_recording(e=None):
+        """Démarre l'enregistrement audio et la reconnaissance vocale."""
         nonlocal recording
         recording = True
         microphone_status.value = "Microphone activé"
         page.update()
 
+        page.controls[1].visible = False  # Masquer le bouton "Commencer"
+        page.controls[0].controls[1].visible = True  # Afficher le bouton "Désactiver Micro"
+        page.update()
+
         loop = asyncio.get_event_loop()
         await loop.run_in_executor(None, update_volume)
 
-        try:
-            print("Démarrage de la reconnaissance vocale...")
-            result, recognized_text = await recognize_speech(current_item)
-        except Exception as e:
-            print(f"Erreur lors de la reconnaissance : {e}")
-            recognized_text = "Erreur de reconnaissance"
-            result = False
+        result, recognized_text = await recognize_speech(current_item)
 
         recording = False
         recognized_text_field.value = recognized_text
@@ -159,23 +183,36 @@ async def main(page: ft.Page):
         else:
             feedback_text.value = f"Incorrect. Vous avez dit : {recognized_text}"
             feedback_text.color = "#FF5733"
-            retry_button = ft.ElevatedButton("Réessayer", on_click=show_next_item, width=200, bgcolor="#4CAF50", color="white")
+            retry_button = ft.ElevatedButton("Réessayer", on_click=start_recording, width=200, bgcolor="#4CAF50", color="white")
             page.add(feedback_text, retry_button)
 
         microphone_status.value = "Microphone désactivé"
+        page.controls[0].controls[1].visible = False  # Masquer le bouton "Désactiver Micro"
         page.add(feedback_text)
         page.update()
 
     async def next_level():
+        """Avance au niveau suivant ou termine l'application."""
         nonlocal current_level
         current_level += 1
         if current_level >= len(voyelles_listes) + len(consonnes_listes) + len(syllabes_listes) + len(mots_listes):
             show_main_menu()
         else:
             show_next_item()
-    
+
+    def deactivate_microphone(e=None):
+        """Désactive le microphone et remet à jour l'interface utilisateur."""
+        nonlocal recording
+        recording = False
+        microphone_status.value = "Microphone désactivé"
+        
+        page.controls[1].visible = True  # Afficher le bouton "Commencer"
+        page.controls[0].controls[1].visible = False  # Masquer le bouton "Désactiver Micro"
+        page.update()
 
     def exit_app(e):
+        """Ferme l'application après avoir désactivé le microphone."""
+        deactivate_microphone()  # Désactiver le microphone avant de fermer
         page.window.close()
 
     show_main_menu()
